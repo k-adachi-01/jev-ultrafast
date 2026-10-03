@@ -77,18 +77,18 @@ def test_one_index_per_node_with_operation_specific_targets():
 def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
     calls = []
 
-    def post(_url, _key, body):
+    def post(_url, _key, body, _headers):
         calls.append(body)
         return {
-            "model": "test",
             "answers": {
                 "operation": choice(body["questions"]["operation"]["criteria"], "TYPE_TEXT"),
                 "type_text_target": choice(["1"], "1"),
                 "click_target": {"choice": "invented"},
             },
+            "providerMetadata": {"typesafe": {"confidence": {"operation": 1.0, "type_text_target": 1.0}}},
         }
 
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test")
     monkeypatch.setattr(model, "post_json", post)
     d = model.choose(page(), "Find a book", [])
     assert len(calls) == 1
@@ -97,17 +97,17 @@ def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
 
 
 def test_click_cannot_consume_a_text_target(monkeypatch):
-    def post(_url, _key, body):
+    def post(_url, _key, body, _headers):
         return {
-            "model": "test",
             "answers": {
                 "operation": choice(body["questions"]["operation"]["criteria"], "CLICK"),
                 "type_text_target": choice(["1"], "1"),
                 "click_target": choice(["1", "2", "999"], "999"),
             },
+            "providerMetadata": {"typesafe": {"confidence": {"operation": 1.0, "click_target": 1.0}}},
         }
 
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test")
     monkeypatch.setattr(model, "post_json", post)
     with pytest.raises(ValueError, match="Invalid TypeSafe"):
         model.choose(page(), "Find a book", [])
@@ -120,28 +120,28 @@ def test_target_head_receives_control_state_and_full_next_step_rules(monkeypatch
         "role": "checkbox", "checked": "true", "selected": False,
     })
 
-    def post(_url, _key, body):
+    def post(_url, _key, body, _headers):
         questions = body["questions"]
         target = questions["click_target"]
         assert target["criteria"]["1"]["checked"] == "true"
         assert target["criteria"]["1"]["selected"] is False
         assert questions["operation"]["instructions"]["rules"] in target["instructions"]["rules"]
         return {
-            "model": "test",
             "answers": {
                 "operation": choice(questions["operation"]["criteria"], "CLICK"),
                 "click_target": choice(target["criteria"], "3"),
             },
+            "providerMetadata": {"typesafe": {"confidence": {"operation": 1.0, "click_target": 1.0}}},
         }
 
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test")
     monkeypatch.setattr(model, "post_json", post)
     d = model.choose(p, "Search with free cancellation", [])
     assert d["choice"] == "e3"
 
 
 def test_quoted_task_text_still_uses_the_llm(monkeypatch):
-    monkeypatch.setenv("TEXT_MODEL_API_KEY", "test")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test")
     post = Mock(return_value={"choices": [{"message": {"content": '{"text":"Zurich"}'}}]})
     monkeypatch.setattr(model, "post_json", post)
     context = model.field_context('Fly from "Zurich" to London', page()["actions"][0], page(), [])
@@ -152,8 +152,8 @@ def test_quoted_task_text_still_uses_the_llm(monkeypatch):
 
 
 def test_missing_text_credential_stops_before_guessing(monkeypatch):
-    monkeypatch.delenv("TEXT_MODEL_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="TEXT_MODEL_API_KEY"):
+    monkeypatch.delenv("AI_GATEWAY_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="AI_GATEWAY_API_KEY"):
         model.field_text({"goal": 'Enter "Zurich"'})
 
 
@@ -282,15 +282,15 @@ def test_flight_verification_rejects_wrong_trip(changed):
 
     actual = {
         "url": "https://www.google.com/travel/flights/search?tfs=example",
-        "text": "Track prices from Zürich to London departing 2026-09-20",
+        "text": "Track prices from Zürich to London departing 2026-10-20",
         "actions": [
             {"label": k, "value": v}
             for k, v in [
                 ("Change ticket type. One way", "One way"),
                 ("Where from?", "Zürich"),
                 ("Where to?", "London"),
-                ("Departure", "Sun, Sep 20"),
-                ("Nonstop flight on Sunday, September 20. Select flight", ""),
+                ("Departure", "Tue, Oct 20"),
+                ("Nonstop flight on Tuesday, October 20. Select flight", ""),
             ]
         ],
     }
@@ -306,7 +306,7 @@ def test_flight_verification_rejects_wrong_trip(changed):
     "content", ["Thinking: Zurich", '{"text":null}', '{"text":"Zurich","extra":true}', '{"text":123}']
 )
 def test_text_helper_rejects_invalid_values(monkeypatch, content):
-    monkeypatch.setenv("TEXT_MODEL_API_KEY", "test")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test")
     monkeypatch.setattr(model, "post_json", Mock(return_value={"choices": [{"message": {"content": content}}]}))
     with pytest.raises(ValueError, match="nothing typed"):
         model.field_text({"goal": "Find a flight"})

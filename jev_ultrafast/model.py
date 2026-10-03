@@ -1,4 +1,4 @@
-"""TypeSafe makes choices; an optional small OpenAI-compatible model writes field values."""
+"""Jev makes choices and a small text model writes values through Vercel AI Gateway."""
 
 import json
 import math
@@ -12,10 +12,11 @@ from .questions import NEXT_ACTION, TARGET, TEXT_VALUE
 CLIENT = httpx.Client(http2=True, timeout=25)
 
 
-def post_json(url, key, body):
+def post_json(url, key, body, headers=None):
+    request_headers = {"Authorization": f"Bearer {key}", **(headers or {})}
     for attempt in range(3):
         try:
-            response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
+            response = CLIENT.post(url, json=body, headers=request_headers)
         except httpx.HTTPError:
             raise RuntimeError("Model connection failed; no action executed.") from None
         if response.status_code in {429, 529, 503} and attempt < 2:
@@ -42,6 +43,17 @@ def validate_choice(answer, ids):
         valid = False
     if not valid:
         raise ValueError("Invalid TypeSafe response; no action executed.")
+    return answer
+
+
+def gateway_choice(result, question_id):
+    """Restore TypeSafe confidence from Gateway provider metadata."""
+    try:
+        answer = dict(result["answers"][question_id])
+        confidence = result["providerMetadata"]["typesafe"]["confidence"][question_id]
+    except (KeyError, TypeError):
+        raise ValueError("Invalid Vercel AI Gateway response; no action executed.") from None
+    answer["confidence"] = confidence
     return answer
 
 
@@ -104,8 +116,8 @@ def choose(state, goal, history):
             },
             "instructions": {"goal": goal, "operation": operation, "rules": [NEXT_ACTION, TARGET]},
         }
+    model = os.environ.get("TYPESAFE_MODEL", "typesafe-ai/jev")
     body = {
-        "model": os.environ.get("TYPESAFE_MODEL", "jev-latest"),
         "state": {
             "page": {k: state[k] for k in ("url", "title", "text")},
             "elements": elements,
@@ -116,15 +128,25 @@ def choose(state, goal, history):
         "questions": questions,
     }
     started = time.perf_counter()
-    result = post_json("https://api.typesafe.ai/v1/systemone", os.environ["TYPESAFE_API_KEY"], body)
-    operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
+    result = post_json(
+        os.environ.get("AI_GATEWAY_EVALUATION_URL", "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"),
+        os.environ["AI_GATEWAY_API_KEY"],
+        body,
+        {
+            "ai-gateway-protocol-version": "0.0.1",
+            "ai-evaluation-model-specification-version": "4",
+            "ai-model-id": model,
+        },
+    )
+    operation_answer = validate_choice(gateway_choice(result, "operation"), operations)
     operation = operation_answer["choice"]
     target = None
     target_answer = None
     probabilities = {}
     if operation in targets:
         # Unused target heads cannot cause an action. Validate the head selected by the operation.
-        target_answer = validate_choice(result["answers"].get(operation.lower() + "_target", {}), targets[operation])
+        target_id = operation.lower() + "_target"
+        target_answer = validate_choice(gateway_choice(result, target_id), targets[operation])
         target = target_answer["choice"]
         choice = targets[operation][target]["id"]
         probabilities = {a["id"]: target_answer["probabilities"][index] for index, a in targets[operation].items()}
@@ -141,10 +163,10 @@ def choose(state, goal, history):
         "target_probabilities": target_answer["probabilities"] if target_answer else {},
         "target_confidence": target_answer["confidence"] if target_answer else None,
         "raw_answers": result["answers"],
-        "model": result["model"],
+        "model": model,
         "usage": result.get("usage", {}),
         "latency_ms": round((time.perf_counter() - started) * 1000),
-        "request": body,
+        "request": {"model": model, **body},
     }
 
 
@@ -158,12 +180,12 @@ def field_context(goal, action, page, history):
 
 
 def field_text(context):
-    key = os.environ.get("TEXT_MODEL_API_KEY")
+    key = os.environ.get("AI_GATEWAY_API_KEY")
     if not key:
-        raise ValueError("TYPE_TEXT needs TEXT_MODEL_API_KEY; no text is hardcoded or guessed by the executor.")
-    base = os.environ.get("TEXT_MODEL_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
-    model = os.environ.get("TEXT_MODEL", "deepseek-chat")
-    reasoning = {"thinking": {"type": "disabled"}} if "api.deepseek.com/" in base else {"reasoning": {"effort": "low"}}
+        raise ValueError("TYPE_TEXT needs AI_GATEWAY_API_KEY; no text is hardcoded or guessed by the executor.")
+    base = os.environ.get("AI_GATEWAY_BASE_URL", "https://ai-gateway.vercel.sh/v1").rstrip("/")
+    model = os.environ.get("TEXT_MODEL", "inception/mercury-2.5")
+    reasoning = {"reasoning": {"effort": "low"}}
     if os.environ.get("TEXT_MODEL_REASONING") == "none":
         reasoning = {"reasoning": {"enabled": False}}
     started = time.perf_counter()

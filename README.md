@@ -53,7 +53,7 @@ git clone https://github.com/browser-use/jev-ultrafast.git
 cd jev-ultrafast
 uv sync
 cp .env.example .env
-# Add TYPESAFE_API_KEY and TEXT_MODEL_API_KEY.
+# Add AI_GATEWAY_API_KEY.
 uv run jev
 ```
 
@@ -61,7 +61,7 @@ Open **http://127.0.0.1:8766** and click **Start demo → Run automatically**. T
 
 Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
 
-`TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The current demo uses `inception/mercury-2.5` with reasoning disabled. Gemini, GLM, and DeepSeek can also use the OpenAI-compatible text helper; configure the appropriate model, endpoint, and reasoning setting.
+`AI_GATEWAY_API_KEY` is a Vercel AI Gateway key shared by Jev and the TYPE_TEXT helper. Jev uses Gateway's evaluation endpoint and the current text helper uses `inception/mercury-2.5` through Gateway's OpenAI-compatible API with reasoning disabled. You can select another model available in AI Gateway with `TEXT_MODEL`.
 
 ## Use the library
 
@@ -70,7 +70,7 @@ from jev_ultrafast import Agent
 
 with Agent(
     "https://www.google.com/travel/flights?hl=en",
-    "Find one-way flights from Zurich to London on September 20, 2026, "
+    "Find one-way flights from Zurich to London on October 20, 2026, "
     "for one adult in economy. Stop when matching flight options are visible.",
 ) as agent:
     for state in agent.run():
